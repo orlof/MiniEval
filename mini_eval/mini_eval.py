@@ -47,12 +47,12 @@ eval_funcs = {
 
 
 class Symbol(object):
-    def __init__(self, id, lbp, expr):
+    def __init__(self, id, bp, expr):
         self.id = id
         self.__name__ = "symbol-" + id
 
         self.expr = expr
-        self.lbp = lbp
+        self.led_bp = self.nud_bp = self.lbp = lbp
 
         self.first = None
         self.second = None
@@ -95,48 +95,83 @@ class Symbol(object):
 
 class SymbolIf(Symbol):
     def __init__(self, expr):
-        super().__init__("if", 20, expr)
+        super(SymbolIf, self).__init__("if", 20, expr)
 
 
 class SymbolElse(Symbol):
     def __init__(self, expr):
-        super().__init__("else", 0, expr)
+        super(SymbolElse, self).__init__("else", 0, expr)
 
 
 class Infix(Symbol):
     def led(self, left):
         self.first = left
-        self.second = expression(self.lbp)
+        self.second = self.expr(self.led_bp)
         return self
 
 
 class InfixR(Symbol):
     def led(self, left):
         self.first = left
-        self.second = expression(self.lbp - 1)
+        self.second = self.expr(self.led_bp - 1)
         return self
 
 
 class SymbolOr(InfixR):
     def __init__(self, expr):
-        super().__init__("or", 30, expr)
+        super(SymbolOr, self).__init__("or", 30, expr)
 
 
 class SymbolAnd(InfixR):
     def __init__(self, expr):
-        super().__init__("and", 40, expr)
+        super(SymbolAnd, self).__init__("and", 40, expr)
 
 
 class Prefix(Symbol):
     def nud(self):
-        self.first = expression(self.lbp)
+        self.first = self.expr(self.nud_bp)
         return self
 
 
 class SymbolNot(Prefix, Infix):
     def __init__(self, expr):
-        super().__init__("not", 60, expr)
+        super(SymbolNot, self).__init__("not", 60, expr)
+        self.nud_bp = 50
 
+
+class SymbolIn(Infix):
+    def __init__(self, expr):
+        super(SymbolIn, self).__init__("in", 60, expr)
+
+
+class SymbolIs(Infix):
+    def __init__(self, expr):
+        super(SymbolIs, self).__init__("is", 60, expr)
+
+
+class SymbolChained(Symbol):
+    def led(self, left):
+        self.first = left
+        self.second = self.expr(self.lbp + 1)
+
+        if token.id in ("<", "<=", ">", ">=", "==", "!=", "<>"):
+            sym_and = symbol("and")()
+            sym_and.first = self
+
+            sym_comp = symbol(token.id)()
+
+            advance(token.id)
+            sym_and.second = sym_comp.led(self.second)
+
+            return sym_and
+        else:
+            return self
+
+
+
+class SymbolLessThan(SymbolChained):
+    def __init__(self, expr):
+        super(SymbolLessThan, self).__init__("<", 60, expr)
 
 
 symbal_table = {
