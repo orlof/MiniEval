@@ -47,11 +47,11 @@ eval_funcs = {
 
 
 class Symbol(object):
-    def __init__(self, id, bp, expr):
+    def __init__(self, id, bp, evaluator):
         self.id = id
         self.__name__ = "symbol-" + id
 
-        self.expr = expr
+        self.evaluator = evaluator
         self.led_bp = self.nud_bp = self.lbp = lbp
 
         self.first = None
@@ -93,227 +93,415 @@ class Symbol(object):
         return "(" + " ".join(out) + ")"
 
 
-class SymbolIf(Symbol):
-    def __init__(self, expr):
-        super(SymbolIf, self).__init__("if", 20, expr)
-
-
-class SymbolElse(Symbol):
-    def __init__(self, expr):
-        super(SymbolElse, self).__init__("else", 0, expr)
-
-
 class Infix(Symbol):
     def led(self, left):
         self.first = left
-        self.second = self.expr(self.led_bp)
+        self.second = self.evaluator.expression(self.led_bp)
         return self
 
 
 class InfixR(Symbol):
     def led(self, left):
         self.first = left
-        self.second = self.expr(self.led_bp - 1)
+        self.second = self.evaluator.expression(self.led_bp - 1)
         return self
+
+
+class Prefix(Symbol):
+    def nud(self):
+        self.first = self.evaluator.expression(self.nud_bp)
+        return self
+
+
+class SymbolLiteral(Symbol):
+    def nud(self):
+        return self
+
+    def _eval(self):
+        return ast.literal_eval(self.value)
+
+
+class SymbolName(Symbol):
+    def nud(self):
+        return self
+
+    def _eval(self):
+        return self.evaluator.names[self.value]
+
+
+class SymbolReference(Symbol):
+    def __init__(self, expr):
+        super(SymbolReference, self).__init__(".", 150, expr)
+
+    def led(self, left):
+        if self.evaluator.token.id != "(name)":
+            SyntaxError("Expected an attribute name.")
+        self.first = left
+        self.second = self.evaluator.token
+        self.evaluator.advance()
+        return self
+
+    def _eval(self):
+        return self.first.eval()[self.second.value]
+
+
+class SymbolIs(Symbol):
+    def __init__(self, expr):
+        super(SymbolIs, self).__init__("is", 60, expr)
+        self.is_not = False
+        self.nud_bp = 50
+
+    def led(self, left):
+        if self.evaluator.token.id == "not":
+            self.evaluator.advance()
+            self.id = "is not"
+            self.is_not = True
+        self.first = left
+        self.second = self.evaluator.expression(60)
+        return self
+
+    def _eval(self):
+        if self.is_not:
+            return self.first.eval() is not self.second.eval()
+        return self.first.eval() is self.second.eval()
+
+
+class SymbolIf(Symbol):
+    def __init__(self, expr):
+        super(SymbolIf, self).__init__("if", 20, expr)
+
+    def led(self, left):
+        self.first = left
+        self.second = self.evaluator.expression()
+        self.evaluator.advance("else")
+        self.third = self.evaluator.expression()
+        return self
+
+    def _eval(self):
+        return self.first.eval() if self.second.eval() else self.third.eval()
+
+
+class SymbolEnd(Symbol):
+    pass
+
+
+class SymbolClosingParenthesis(Symbol):
+    pass
+
+
+class SymbolElse(Symbol):
+    pass
+
+
+class SymbolBitwiseOr(Infix):
+    def __init__(self, expr):
+        super(SymbolBitwiseOr, self).__init__("|", 70, expr)
+
+    def _eval(self):
+        return self.first.eval() | self.second.eval()
+
+
+class SymbolBitwiseXor(Infix):
+    def __init__(self, expr):
+        super(SymbolBitwiseXor, self).__init__("^", 80, expr)
+
+    def _eval(self):
+        return self.first.eval() ^ self.second.eval()
+
+
+class SymbolBitwiseAnd(Infix):
+    def __init__(self, expr):
+        super(SymbolBitwiseAnd, self).__init__("&", 90, expr)
+
+    def _eval(self):
+        return self.first.eval() & self.second.eval()
+
+
+class SymbolShiftLeft(Infix):
+    def __init__(self, expr):
+        super(SymbolShiftLeft, self).__init__("<<", 100, expr)
+
+    def _eval(self):
+        return self.first.eval() << self.second.eval()
+
+
+class SymbolShiftRight(Infix):
+    def __init__(self, expr):
+        super(SymbolShiftRight, self).__init__(">>", 100, expr)
+
+    def _eval(self):
+        return self.first.eval() >> self.second.eval()
+
+
+class SymbolMultiplication(Infix):
+    def __init__(self, expr):
+        super(SymbolMultiplication, self).__init__("*", 120, expr)
+
+    def _eval(self):
+        return self.first.eval() * self.second.eval()
+
+
+class SymbolDivision(Infix):
+    def __init__(self, expr):
+        super(SymbolDivision, self).__init__("/", 120, expr)
+
+    def _eval(self):
+        return self.first.eval() / self.second.eval()
+
+
+class SymbolIntegerDivision(Infix):
+    def __init__(self, expr):
+        super(SymbolIntegerDivision, self).__init__("//", 120, expr)
+
+    def _eval(self):
+        return self.first.eval() // self.second.eval()
+
+
+class SymbolModulo(Infix):
+    def __init__(self, expr):
+        super(SymbolModulo, self).__init__("%", 120, expr)
+
+    def _eval(self):
+        return self.first.eval() % self.second.eval()
 
 
 class SymbolOr(InfixR):
     def __init__(self, expr):
         super(SymbolOr, self).__init__("or", 30, expr)
 
+    def _eval(self):
+        return self.first.eval() or self.second.eval()
+
 
 class SymbolAnd(InfixR):
     def __init__(self, expr):
         super(SymbolAnd, self).__init__("and", 40, expr)
 
-
-class Prefix(Symbol):
-    def nud(self):
-        self.first = self.expr(self.nud_bp)
-        return self
+    def _eval(self):
+        return self.first.eval() and self.second.eval()
 
 
-class SymbolNot(Prefix, Infix):
+class SymbolExponent(InfixR):
+    def __init__(self, expr):
+        super(SymbolExponent, self).__init__("**", 140, expr)
+
+    def _eval(self):
+        return self.first.eval() and self.second.eval()
+
+
+class SymbolNot(Prefix):
     def __init__(self, expr):
         super(SymbolNot, self).__init__("not", 60, expr)
         self.nud_bp = 50
+
+    def led(self, left):
+        if self.evaluator.token.id != "in":
+            raise SyntaxError("Invalid syntax")
+        self.evaluator.advance()
+        self.id = "not in"
+        self.first = left
+        self.second = self.evaluator.expression(60)
+        return self
+
+    def _eval(self):
+        if self.second is None:
+            return not self.first.eval()
+        return self.first.eval() not in self.second.eval()
+
+
+class SymbolAddition(Prefix, Infix):
+    def __init__(self, expr):
+        super(SymbolAddition, self).__init__("+", 110, expr)
+
+    def _eval(self):
+        if self.second is None:
+            return +self.first.eval()
+        return self.first.eval() + self.second.eval()
+
+
+class SymbolSubstraction(Prefix, Infix):
+    def __init__(self, expr):
+        super(SymbolSubstraction, self).__init__("-", 110, expr)
+
+    def _eval(self):
+        if self.second is None:
+            return -self.first.eval()
+        return self.first.eval() - self.second.eval()
+
+
+class SymbolStartingParenthesis(Prefix, Infix):
+    def __init__(self, expr):
+        super(SymbolStartingParenthesis, self).__init__("(", 150, expr)
+
+    def led(self, left):
+        self.first = left
+        self.second = []
+        if self.evaluator.token.id != ")":
+            while 1:
+                self.second.append(self.evaluator.expression())
+                if self.evaluator.token.id != ",":
+                    break
+                self.evaluator.advance(",")
+        self.evaluator.advance(")")
+        return self
+
+    def nud(self):
+        self.first = []
+        comma = False
+        if self.evaluator.token.id != ")":
+            while 1:
+                if self.evaluator.token.id == ")":
+                    break
+                self.first.append(self.evaluator.expression())
+                if self.evaluator.token.id != ",":
+                    break
+                comma = True
+                self.evaluator.advance(",")
+        self.evaluator.advance(")")
+        if not self.first or comma:
+            return self # tuple
+        else:
+            return self.first[0]
+
+    def _eval(self):
+        if self.second is None:
+            return (x.eval() for x in self.first)
+        return self.first.eval()(*[x.eval() for x in self.second])
+
+
+class SymbolBitwiseNegate(Prefix):
+    def __init__(self, expr):
+        super(SymbolBitwiseNegate, self).__init__("~", 130, expr)
 
 
 class SymbolIn(Infix):
     def __init__(self, expr):
         super(SymbolIn, self).__init__("in", 60, expr)
 
-
-class SymbolIs(Infix):
-    def __init__(self, expr):
-        super(SymbolIs, self).__init__("is", 60, expr)
+    def _eval(self):
+        return self.first.eval() in self.second.eval()
 
 
 class SymbolChained(Symbol):
     def led(self, left):
         self.first = left
-        self.second = self.expr(self.lbp + 1)
+        self.second = self.evaluator.expression(self.lbp + 1)
 
-        if token.id in ("<", "<=", ">", ">=", "==", "!=", "<>"):
+        if self.evaluator.token.id in ("<", "<=", ">", ">=", "==", "!=", "<>"):
             sym_and = symbol("and")()
             sym_and.first = self
 
-            sym_comp = symbol(token.id)()
+            sym_comp = symbol(self.evaluator.token.id)()
 
-            advance(token.id)
+            self.evaluator.advance(self.evaluator.token.id)
             sym_and.second = sym_comp.led(self.second)
 
             return sym_and
         else:
             return self
-
 
 
 class SymbolLessThan(SymbolChained):
     def __init__(self, expr):
         super(SymbolLessThan, self).__init__("<", 60, expr)
 
+    def _eval(self):
+        return self.first.eval() < self.second.eval()
 
-symbal_table = {
+
+class SymbolLessThanOrEqual(SymbolChained):
+    def __init__(self, expr):
+        super(SymbolLessThanOrEqual, self).__init__("<=", 60, expr)
+
+    def _eval(self):
+        return self.first.eval() <= self.second.eval()
+
+
+class SymbolGreaterThan(SymbolChained):
+    def __init__(self, expr):
+        super(SymbolGreaterThan, self).__init__(">", 60, expr)
+
+    def _eval(self):
+        return self.first.eval() > self.second.eval()
+
+
+class SymbolGreaterThanOrEqual(SymbolChained):
+    def __init__(self, expr):
+        super(SymbolGreaterThanOrEqual, self).__init__(">=", 60, expr)
+
+    def _eval(self):
+        return self.first.eval() >= self.second.eval()
+
+
+class SymbolEqual(SymbolChained):
+    def __init__(self, expr):
+        super(SymbolEqual, self).__init__("==", 60, expr)
+
+    def _eval(self):
+        return self.first.eval() == self.second.eval()
+
+
+class SymbolNotEqual(SymbolChained):
+    def __init__(self, expr):
+        super(SymbolNotEqual, self).__init__("==", 60, expr)
+
+    def _eval(self):
+        return self.first.eval() != self.second.eval()
+
+
+# symbol (token type) registry
+symbol_table = {
+    "%": SymbolModulo,
+    "//": SymbolIntegerDivision,
+    "/": SymbolDivision,
+    "*": SymbolMultiplication,
+    "**": SymbolExponent,
+    ">>": SymbolShiftRight,
+    "<<": SymbolShiftLeft,
+    "&": SymbolBitwiseAnd,
+    "^": SymbolBitwiseXor,
+    "|": SymbolBitwiseOr,
+    "~": SymbolBitwiseNegate,
+    "<>": SymbolNotEqual,
+    "!=": SymbolNotEqual,
+    "==": SymbolEqual,
+    "<": SymbolLessThan,
+    "=<": SymbolLessThanOrEqual,
+    ">": SymbolGreaterThan,
+    ">=": SymbolGreaterThanOrEqual,
+    "or": SymbolOr,
+    "and": SymbolAnd,
+    "(": SymbolStartingParenthesis,
+
+    "not": SymbolNot,
+    "in": SymbolIn,
+    "is": SymbolIs,
+    "if": SymbolIf,
+    "~": SymbolBitwiseNegate,
+    "+": SymbolAddition,
+    "-": SymbolSubstraction,
+    "[": lambda self: [x.eval() for x in self.first] if self.second is None else self.first.eval()[self.second.eval()],
+    "{": lambda self: {key.eval(): val.eval() for key, val in self.first},
+    "(": SymbolStartingParenthesis,
+
+    ".": SymbolReference,
+    "(literal)": SymbolLiteral,
+    "(name)": SymbolName
 
 }
-
-if 1:
-
-    # symbol (token type) registry
-    symbol_table = {}
-
-    def symbol(id, bp=0):
-        try:
-            s = symbol_table[id]
-        except KeyError:
-            class s(symbol_base):
-                pass
-            s.__name__ = "symbol-" + id # for debugging
-            s.id = id
-            s.value = None
-            s.lbp = bp
-            symbol_table[id] = s
-        else:
-            s.lbp = max(bp, s.lbp)
-
-        return s
-
-    # helpers
-
-
-    def advance(id=None):
-        global token
-        if id and token.id != id:
-            raise SyntaxError("Expected %r" % id)
-        token = next()
-
-    def method(*args):
-        # decorator
-        symbols = [symbol(op) for op in args]
-        assert all((issubclass(symbol, symbol_base) for symbol in symbols))
-
-        def bind(fn):
-            for symbol in symbols:
-                setattr(symbol, fn.__name__, fn)
-        return bind
-
-    # python expression syntax
-
-
-    symbol("if", 20); symbol("else")  # ternary form
-
-    infix_r("or", 30)
-    infix_r("and", 40)
-
-    prefix("not", 50)
 
     infix("in", 60); infix("not", 60) # not in
     infix("is", 60)
 
-    symbol("<", 60)
-    symbol("<=", 60)
-    symbol(">", 60)
-    symbol(">=", 60)
-    symbol("<>", 60)
-    symbol("!=", 60)
-    symbol("==", 60)
 
-    @method("<", "<=", ">", ">=", "==", "!=", "<>")
-    def led(self, left):
-        self.first = left
-        self.second = expression(self.lbp + 1)
-
-        if token.id in ("<", "<=", ">", ">=", "==", "!=", "<>"):
-            sym_and = symbol("and")()
-            sym_and.first = self
-
-            sym_comp = symbol(token.id)()
-
-            advance(token.id)
-            sym_and.second = sym_comp.led(self.second)
-
-            return sym_and
-        else:
-            return self
-
-    infix("|", 70)
-    infix("^", 80)
-    infix("&", 90)
-
-    infix("<<", 100)
-    infix(">>", 100)
-
-    infix("+", 110)
-    infix("-", 110)
-
-    infix("*", 120)
-    infix("/", 120)
-    infix("//", 120)
-    infix("%", 120)
-
-    prefix("-", 130)
-    prefix("+", 130)
-    prefix("~", 130)
-
-    infix_r("**", 140)
-
-    symbol(".", 150)
     symbol("[", 150)
-    symbol("(", 150)
 
     # additional behaviour
 
-    symbol("(name)").nud = lambda self: self
-    symbol("(literal)").nud = lambda self: self
-    symbol("(end)")
-    symbol(")")
 
-    @method("(")
-    def nud(self):
-        # parenthesized form; replaced by tuple former below
-        expr = expression()
-        advance(")")
-        return expr
 
     symbol("else")
 
-    @method("if")
-    def led(self, left):
-        self.first = left
-        self.second = expression()
-        advance("else")
-        self.third = expression()
-        return self
-
-    @method(".")
-    def led(self, left):
-        if token.id != "(name)":
-            SyntaxError("Expected an attribute name.")
-        self.first = left
-        self.second = token
-        advance()
-        return self
 
     symbol("]")
 
@@ -326,19 +514,6 @@ if 1:
 
     symbol(")")
     symbol(",")
-
-    @method("(")
-    def led(self, left):
-        self.first = left
-        self.second = []
-        if token.id != ")":
-            while 1:
-                self.second.append(expression())
-                if token.id != ",":
-                    break
-                advance(",")
-        advance(")")
-        return self
 
     symbol(":")
     symbol("=")
@@ -373,45 +548,7 @@ if 1:
 
     # multitoken operators
 
-    @method("not")
-    def led(self, left):
-        if token.id != "in":
-            raise SyntaxError("Invalid syntax")
-        advance()
-        self.id = "not in"
-        self.first = left
-        self.second = expression(60)
-        return self
-
-    @method("is")
-    def led(self, left):
-        if token.id == "not":
-            advance()
-            self.id = "is not"
-        self.first = left
-        self.second = expression(60)
-        return self
-
     # displays
-
-    @method("(")
-    def nud(self):
-        self.first = []
-        comma = False
-        if token.id != ")":
-            while 1:
-                if token.id == ")":
-                    break
-                self.first.append(expression())
-                if token.id != ",":
-                    break
-                comma = True
-                advance(",")
-        advance(")")
-        if not self.first or comma:
-            return self # tuple
-        else:
-            return self.first[0]
 
     symbol("]")
 
@@ -449,35 +586,6 @@ if 1:
         return self
 
     # python tokenizer
-
-    # parser engine
-
-    def expression(rbp=0):
-        global token
-        t = token
-        token = next()
-        left = t.nud()
-        while rbp < token.lbp:
-            t = token
-            token = next()
-            left = t.led(left)
-        return left
-
-    def parse(program):
-        global token, next
-        next = tokenize(program).next
-        token = next()
-        return expression()
-
-    def test(program):
-        print(">>>", program)
-        parsed = parse(program)
-        print(parsed)
-        return parsed
-
-    def eval(program):
-        symbol = test(program)
-        print(symbol.eval())
 
 
 type_map = {
@@ -561,6 +669,11 @@ class Evaluator(object):
                 else:
                     raise SyntaxError("Unknown operator (%r)" % op)
             yield s
+
+    def advance(self, id=None):
+        if id and self.token.id != id:
+            raise SyntaxError("Expected %r" % id)
+        self.token = next(self.token_iter)
 
 
 
